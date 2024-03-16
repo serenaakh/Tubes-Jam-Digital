@@ -1,0 +1,223 @@
+#include<avr/io.h>
+#include<avr/interrupt.h>
+#include "pitches.h"
+//inisialisasi untuk lcd
+#include <LiquidCrystal.h>;
+const int rs = 12, en = 11, d5 = 6, d6 = 5, d7 = 4, d8 = 3;
+LiquidCrystal lcd(rs, en, d5, d6, d7, d8);
+//inisialisasi input pushbutton
+const int buzzer = 2, led = 13;
+const int pushbtn1 = 10; 
+const int pushbtn2 = 9;
+const int pushbtn3 = 8;
+const int switch1 = 7;
+
+int H, M, S = 0;        // Counter untuk mode jam digital
+int H_a, M_a, S_a = 0;  // Counter untuk waktu alarm
+int M_s, S_s, MS_s = 0; // Counter untuk stopwatch
+
+float Hstate, HLstate, Mstate, MLstate = 0;
+float Mode_State, Mode_Lstate = 0;
+bool sw_start = false;
+int mode_counter = 0;
+int OVF = 0;
+bool bPress = false;
+
+int melody[] = {
+  NOTE_E5, NOTE_D5, NOTE_FS4, NOTE_GS4, 
+  NOTE_CS5, NOTE_B4, NOTE_D4, NOTE_E4, 
+  NOTE_B4, NOTE_A4, NOTE_CS4, NOTE_E4,
+  NOTE_A4
+};
+
+int durations[] = {
+  8, 8, 4, 4,
+  8, 8, 4, 4,
+  8, 8, 4, 4,
+  2
+};
+
+void init_int(void){
+    // Enable timer1 overflow interrupt
+    TIMSK1 = (1 << TOIE1);
+
+    // Set mode timer dengan prescaler 1024
+    TCCR1A = 0x00;
+    TCCR1B = (1<<CS10) | (1<<CS12);
+
+    // Untuk 100 ms
+    TCNT1 = 63974;
+    
+    // Enable interrupt
+    sei();
+}
+
+ISR (TIMER1_OVF_vect){
+  OVF++;
+  if (sw_start){
+    MS_s = MS_s + 10;
+    if (MS_s >= 100){MS_s = 0; S_s++;}
+    if (S_s >= 60){S_s = 0; M_s++;}
+  }
+  if (OVF >= 10) {S++; OVF = 0;}
+  if (S >= 60) {S = 0; M++;} 
+  if (M >= 60) {M = 0; H++;}
+  if (H >= 24) {H = 0;}
+  TCNT1 = 63974;
+}
+
+void setup(){
+  init_int();
+  DDRD = 0b11111111;
+  DDRB = 0b00111111;
+  H,M,S = 0;
+  mode_counter = 0;
+  lcd.begin(16, 2);
+  pinMode(pushbtn1, INPUT);  // Tombol jam
+  pinMode(pushbtn2, INPUT);  // Tombol menit
+  pinMode(pushbtn3, INPUT);  // Tombol ganti mode
+  pinMode(switch1, INPUT);  // Alarm switch
+  pinMode(buzzer, OUTPUT);   // Buzzer
+  pinMode(led, OUTPUT);
+}
+
+void loop(){
+  if (mode_counter%3 == 0){             // Mode jam digital
+    lcd.setCursor(0,0);
+    lcd.print("Jam Digital");
+    lcd.setCursor(3,1);
+    if(H<10)lcd.print("0");
+    lcd.print(H);
+    lcd.print(":");
+    if(M<10)lcd.print("0");
+    lcd.print(M);
+    lcd.print(":");
+    if(S<10)lcd.print("0");
+    lcd.print(S);
+    delay(100);
+  }
+  else if (mode_counter%3 == 1){          // Mode set alarm
+    lcd.setCursor(0,0);
+    lcd.print("Set Alarm  ");
+    lcd.setCursor(3,1);
+    if(H_a<10)lcd.print("0");
+    lcd.print(H_a);
+    lcd.print(":");
+    if(M_a<10)lcd.print("0");
+    lcd.print(M_a);
+    lcd.print(":");
+    if(S_a<10)lcd.print("0");
+    lcd.print(S_a);
+    delay(100);
+  }
+  else if (mode_counter%3 == 2){          // Mode stopwatch
+    lcd.setCursor(0,0);
+    lcd.print("Stopwatch  ");
+    lcd.setCursor(3,1);
+    if(M_s<10)lcd.print("0");
+    lcd.print(M_s);
+    lcd.print(":");
+    if(S_s<10)lcd.print("0");
+    lcd.print(S_s);
+    lcd.print(":");
+    lcd.print(MS_s);
+    delay(100);
+  }
+  checkH(); checkM(); checkMode(); checkAlarm();
+}
+
+void incH(){ //Fungsi Increment Jam pada mode Jam
+  H++;
+  if (H >= 24){H = 0;}
+}
+
+void incH_a(){ //Fungsi Increment Jam pada mode Alarm
+  H_a++;
+  if (H_a >= 24){H_a = 0;}
+}
+
+void incM(){ //Fungsi Increment Menit pada Mode Jam
+  M++;
+  if (M >= 60){M = 0; incH();}
+}
+
+void incM_a(){ //Fungsi Increment Menit pada Mode Alarm
+  M_a++;
+  if (M_a >= 60){M_a = 0; incH_a();}
+}
+
+void changeMode(){ //Fungsi untuk menentukan mode
+  mode_counter++;
+  if (mode_counter >= 3){mode_counter = 0;}
+}
+
+void checkMode(){ //Fungsi untuk mengubah mode
+  Mode_State = digitalRead(pushbtn3);
+  if (Mode_State != Mode_Lstate){
+    bPress = true;
+    changeMode();
+  }
+  Mode_Lstate = Mode_State;
+}
+
+void checkH(){ //Fungsi untuk mengecek push button hour
+  Hstate = digitalRead(pushbtn1);
+  if (Hstate != HLstate){
+    if (Hstate == LOW){
+      bPress = true;
+      if (mode_counter == 0) incH(); //Melakukan increment Jam pada mode jam
+      else if (mode_counter == 1) incH_a(); //Melakukan increment Jam pada mode Alarm
+      else if (mode_counter == 2) {M_s = 0; S_s = 0; MS_s = 0;} //Mereset hitungan pada stopwatch
+    }
+  }
+  HLstate = Hstate;
+}
+
+void checkM(){ //Fungsi untuk mengecek push button minute
+  Mstate = digitalRead(pushbtn2);
+  if (Mstate != MLstate){
+    if (Mstate == LOW){
+      bPress = true;
+      if (mode_counter == 0) incM(); //Melakukan increment menit pada mode Jam
+      else if (mode_counter == 1) incM_a(); //Melakukan increment menit pada mode Alarm
+      else if (mode_counter == 2) sw_start = !sw_start; //Melakukan start/stop pada mode stopwatch
+    }
+  }
+  MLstate = Mstate;
+}
+
+void checkAlarm(){ //Fungsi untuk menghidupkan Alarm
+  if (digitalRead(switch1)==LOW){
+    if (H == H_a && M == M_a) {
+      bunyiAlarm();
+      digitalWrite(led, HIGH);
+    }
+    else {
+      noTone(buzzer);
+      digitalWrite(led, LOW);
+    }
+  }
+  else {
+    noTone(buzzer);
+    digitalWrite(led, LOW);
+  }
+}
+
+void bunyiAlarm(){
+  int size = sizeof(durations) / sizeof(int);
+
+  for (int note = 0; note < size; note++) {
+    //to calculate the note duration, take one second divided by the note type.
+    //e.g. quarter note = 1000 / 4, eighth note = 1000/8, etc.
+    int duration = 1000 / durations[note];
+    tone(buzzer, melody[note], duration);
+
+    //to distinguish the notes, set a minimum time between them.
+    //the note's duration + 30% seems to work well:
+    int pauseBetweenNotes = duration * 1.30;
+    delay(pauseBetweenNotes);
+    
+    //stop the tone playing:
+    noTone(buzzer);
+  }
+  }
